@@ -18,6 +18,8 @@ members = [
     "wire",
     "wasm-modules/git_upload_pack",
     "wasm-modules/git_receive_pack",
+    "wasm-modules/git_upload_pack_wit",
+    "wasm-modules/git_receive_pack_wit",
 ]
 
 [workspace.package]

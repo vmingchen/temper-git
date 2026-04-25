@@ -1,0 +1,30 @@
+[package]
+name = "git_upload_pack_wit"
+description = "WIT-typed (component-model) git upload-pack handler. Demonstrates the new ABI introduced by ADR-0062 + RFC-0003 Slice 4. Coexists with git_upload_pack (legacy JSON-blob ABI) until the kernel-side component dispatcher lands."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+# wit-bindgen generates the typed Rust bindings from ../../wit/integration.wit.
+# When ~/temper bumps the submodule pointer to a commit containing the WIT,
+# the path argument in lib.rs flips from "../../wit" to "../../temper/wit"
+# and this dir's mirror disappears (see ../../wit/README.md).
+wit-bindgen = "0.36"
+
+# Pure libraries — same surface as the legacy module uses. No SDK
+# dependency: every host call goes through the WIT-imported interfaces.
+tg-canonical = { path = "../../canonical" }
+tg-wire = { path = "../../wire" }
+
+# OData response bodies still arrive as JSON bytes (per WIT 0.1's
+# `tdata.list-rows -> list<u8>`). RFC-0003 Slice 3 promotes these to
+# typed records; for now we keep the parsing layer.
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }

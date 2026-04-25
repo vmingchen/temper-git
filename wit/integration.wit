@@ -1,0 +1,195 @@
+// Temper integration ABI — WIT-typed surface for opt-in WASM apps.
+//
+// This file is the canonical contract between the Temper kernel and any
+// WASM integration that uses the typed (component-model) ABI introduced
+// by ADR-0062. Existing JSON-blob integrations continue to use the raw
+// FFI in crates/temper-wasm-sdk/src/host.rs and are unaffected.
+//
+// Consumers:
+//   * Guest:  crates/temper-wasm-sdk (component feature) generates Rust
+//             bindings via wit-bindgen.
+//   * Host:   crates/temper-wasm/src/engine/component.rs (to land in
+//             ADR-0062 Phase 2) implements the imports against
+//             Arc<dyn WasmHost>.
+//
+// Stability: 0.1.0. Pre-1.0; breaking changes possible. We bump to 0.2
+// when we add per-trigger worlds (state-trigger, webhook-trigger).
+//
+// See:
+//   * ADR-0062: WIT-typed WASM integration ABI
+//   * ADR-0063: Verus-readiness for the WASM SDK
+//   * temper-git/docs/rfc/0003-typed-handler-abi-and-verus.md
+
+package temper:integration@0.1.0;
+
+// ── Principal & auth context ────────────────────────────────────────
+
+interface principal {
+  enum principal-kind {
+    anonymous,
+    system,
+    customer,
+    admin,
+  }
+
+  record principal {
+    id: string,
+    kind: principal-kind,
+    scopes: list<string>,
+    account-id: string,
+    agent-type: string,
+    agent-type-verified: bool,
+  }
+}
+
+// ── HTTP request / response surface ─────────────────────────────────
+
+interface http {
+  use principal.{principal};
+
+  record header {
+    name: string,
+    value: string,
+  }
+
+  record path-param {
+    name: string,
+    value: string,
+  }
+
+  // Inbound request seen by an HTTP-triggered handler.
+  //
+  // `body` is materialized eagerly: the kernel reads the request body
+  // up to `WasmResourceLimits::max_request_body` and hands the buffer
+  // to the guest. Bounded enough to be fine for typical git push/pull
+  // negotiations (typically <16 MiB). A follow-up revision (0.2)
+  // replaces this with a stream id paired with a
+  // `bytes.read-stream(id, max)` import; the eager shape stays
+  // supported as a convenience for handlers that don't need streams.
+  //
+  // Headers and params are eagerly materialized. `principal` is
+  // resolved by the kernel before dispatch (auth integration runs
+  // host-side); the handler trusts the value and uses it for outbound
+  // tdata calls.
+  record request {
+    method: string,
+    path: string,
+    query: string,
+    headers: list<header>,
+    params: list<path-param>,
+    principal: principal,
+    body: list<u8>,
+  }
+
+  // Status + headers. Status code is u16 because RFC 9110 caps codes at
+  // 599; using u32 would invite invalid values.
+  record response-head {
+    status: u16,
+    headers: list<header>,
+  }
+
+  // Eager response. Sufficient for handlers whose responses fit in
+  // bounded memory (typical REST surfaces, info/refs advertisements).
+  // Streaming-response handlers come in a 0.2 revision via a separate
+  // export shape (`stream-serve`) that returns a writable resource.
+  record response {
+    head: response-head,
+    body: list<u8>,
+  }
+}
+
+// ── OData (kernel persistence) ──────────────────────────────────────
+
+interface tdata {
+  variant tdata-error {
+    not-found,
+    conflict(string),
+    forbidden,
+    bad-request(string),
+    transport(string),
+  }
+
+  // List rows from an entity set, optionally filtered with an OData
+  // query (`$filter=...`, `$top=...`, etc.). Body bytes are JSON for
+  // schema-version compatibility with the existing OData responses;
+  // typed body variants land in a 0.2 revision per RFC-0003 Slice 3.
+  list-rows: func(entity-set: string, query: string)
+            -> result<list<u8>, tdata-error>;
+
+  get-row: func(entity-set: string, id: string)
+            -> result<list<u8>, tdata-error>;
+
+  create-row: func(entity-set: string, body-json: list<u8>)
+            -> result<list<u8>, tdata-error>;
+
+  // Custom OData action on a specific row, e.g.
+  // `Refs('rf-foo-bar-main')/Temper.Update`. `action-name` is the
+  // bound action name without the "Temper." prefix.
+  call-action: func(
+    entity-set: string,
+    id: string,
+    action-name: string,
+    body-json: list<u8>,
+  ) -> result<list<u8>, tdata-error>;
+
+  delete-row: func(entity-set: string, id: string) -> result<_, tdata-error>;
+}
+
+// ── Cedar authorization ─────────────────────────────────────────────
+
+interface cedar {
+  use principal.{principal};
+
+  // Synchronous policy evaluation. `action` and `resource` are the EID
+  // strings from the policy schema; the kernel resolves them to entity
+  // attributes via the IOA / OData layer.
+  permits: func(p: principal, action: string, resource-eid: string) -> bool;
+}
+
+// ── Secrets, log, metrics, clock ────────────────────────────────────
+
+interface secrets {
+  get: func(key: string) -> option<string>;
+}
+
+interface log {
+  enum level {
+    trace,
+    debug,
+    info,
+    warn,
+    error,
+  }
+  emit: func(lvl: level, target: string, msg: string);
+}
+
+interface metrics {
+  emit-counter: func(name: string, value: f64, labels-json: string);
+  emit-gauge:   func(name: string, value: f64, labels-json: string);
+}
+
+interface clock {
+  // Wall-clock-equivalent millis for the current invocation. In DST mode
+  // this is `sim_now()` rather than the host clock.
+  now-millis: func() -> u64;
+}
+
+// ── World ───────────────────────────────────────────────────────────
+
+// HTTP-triggered handler. ADR-0062 Phase 2 lands the kernel-side
+// implementation; Phase 4 migrates temper-git to this world per
+// ADR-0004 + RFC-0003 Slices 4-5.
+world http-handler {
+  import http;
+  import principal;
+  import tdata;
+  import cedar;
+  import secrets;
+  import log;
+  import metrics;
+  import clock;
+
+  use http.{request, response};
+
+  export serve: func(req: request) -> result<response, string>;
+}
