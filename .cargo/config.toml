@@ -1,0 +1,10 @@
+# Workaround for a developer-environment quirk: when the inherited
+# LIBRARY_PATH ends in `:` (e.g. shells that do `LIBRARY_PATH=...:$LIBRARY_PATH`
+# while the original is unset), the empty trailing component is interpreted by
+# gcc as cwd. gcc's `find_a_file("specs")` then matches our top-level `specs/`
+# directory and aborts the link with `cannot read spec file './specs': Is a
+# directory`. Forcing LIBRARY_PATH here strips that empty component for any
+# `cc` cargo invokes during linking. Override `force = false` (or unset
+# CARGO_LIBRARY_PATH_OVERRIDE in env) if you need a different value locally.
+[env]
+LIBRARY_PATH = { value = "/lib", force = true }
