@@ -1,0 +1,21 @@
+[package]
+name = "tg-spec"
+description = "Ghost model of the Temper kernel state visible to temper-git's verified handlers. Pure Verus specification — never linked into a binary; verified standalone via `proofs/verify.sh`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+# This crate is verified, not run. The src/ tree is a placeholder
+# carrying documentation pointers; the verified content lives in
+# proofs/*.verus.rs and is exercised by `proofs/verify.sh` invoking
+# the standalone `verus` binary directly. Once cargo-verus is
+# unblocked (see ~/temper/docs/VERUS.md), the proofs move into src/
+# under `cfg(feature = "verify")` and become part of the standard
+# cargo workspace.
+[dependencies]
+# No runtime deps — this crate compiles to nothing.

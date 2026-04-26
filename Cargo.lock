@@ -396,6 +396,10 @@ name = "tg-canonical"
 version = "0.0.1"
 
 [[package]]
+name = "tg-spec"
+version = "0.0.1"
+
+[[package]]
 name = "tg-wire"
 version = "0.0.1"
 dependencies = [
