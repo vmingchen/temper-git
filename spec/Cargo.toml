@@ -19,3 +19,9 @@ path = "src/lib.rs"
 # cargo workspace.
 [dependencies]
 # No runtime deps — this crate compiles to nothing.
+
+[features]
+# Run the Verus proofs in `proofs/` as part of `cargo build`. Default
+# builds skip them; opting in via `--features verify` makes the build
+# fail on any verification error. See `build.rs`.
+verify = []

@@ -19,3 +19,9 @@ tg-wire = { path = "../../wire" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+
+[features]
+# Run the Verus proofs in `proofs/` as part of `cargo build`. Default
+# builds skip them; opting in via `--features verify` makes the build
+# fail on any verification error. See `build.rs`.
+verify = []

@@ -22,3 +22,9 @@ crate-type = ["rlib"]
 # For fixture round-trips against real git.
 # Tests shell out to `git hash-object` and `git cat-file` to verify
 # byte-exact parity — see ADR-0003.
+
+[features]
+# Run the Verus proofs in `proofs/` as part of `cargo build`. Default
+# builds skip them entirely; opting in via `--features verify` makes
+# the build fail on any verification error. See `build.rs`.
+verify = []

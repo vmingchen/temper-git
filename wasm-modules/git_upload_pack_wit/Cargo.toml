@@ -32,6 +32,12 @@ base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 # Verus annotations live under `proofs/`. They are verified by invoking
 # the `verus` binary directly on each `.verus.rs` file (see proofs/README.md
 # in this crate); cargo doesn't compile them because they import vstd
-# from the Verus toolchain, not from cargo. Once ADR-0063 (kernel-side
-# `verify` feature) lands, the proofs move into `src/` under
-# `cfg(feature = "verify")` and are compiled by `cargo verus verify`.
+# from the Verus toolchain, not from cargo. The `verify` feature below
+# wires verus into `cargo build` via `build.rs` so the proofs run as
+# part of the cargo workflow.
+
+[features]
+# Run the Verus proofs in `proofs/` as part of `cargo build`. Default
+# builds skip them; opting in via `--features verify` makes the build
+# fail on any verification error. See `build.rs`.
+verify = []
