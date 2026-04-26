@@ -258,4 +258,113 @@ pub fn blob_canonical_bytes(content: &[u8]) -> (out: Vec<u8>)
     out
 }
 
+// ── SHA-1 streaming hasher (mirror of temper-wasm-sdk::axioms) ──────
+//
+// The kernel-side axioms ship `Sha1State` with `new`/`update`/`digest`
+// in `~/temper/crates/temper-wasm-sdk/src/axioms.rs`. Standalone
+// `verus` invocation can't import from another cargo crate today
+// (path 2 of the cargo-verus unblock work in `temper/docs/VERUS.md`),
+// so this file mirrors the contract locally. Once `cargo verus
+// verify` works for our setup, the mirror disappears: this proof
+// `use temper_wasm_sdk::axioms::Sha1State;` and the local mirror
+// becomes redundant.
+
+pub uninterp spec fn sha1_pure(input: Seq<u8>) -> Seq<u8>;
+
+pub struct Sha1State;
+
+impl Sha1State {
+    pub uninterp spec fn bytes_so_far(self) -> Seq<u8>;
+
+    #[verifier::external_body]
+    pub fn new() -> (out: Self)
+        ensures
+            out.bytes_so_far() == Seq::<u8>::empty(),
+    {
+        unimplemented!()
+    }
+
+    #[verifier::external_body]
+    pub fn update(&mut self, data: &[u8])
+        ensures
+            self.bytes_so_far() == old(self).bytes_so_far().add(data@),
+    {
+        unimplemented!()
+    }
+
+    #[verifier::external_body]
+    pub fn digest(self) -> (out: [u8; 20])
+        ensures
+            out@ == sha1_pure(self.bytes_so_far()),
+    {
+        unimplemented!()
+    }
+}
+
+// ── Verified: blob_hash composes streaming Sha1 with canonical bytes ─
+
+/// **Headline ADR-0003 theorem for blobs.**
+///
+/// `blob_hash(content)` is what `tg-canonical::blob_hash` produces
+/// (modulo hex encoding — we return the raw 20-byte digest; the real
+/// function wraps `hex_lower` around this). The postcondition ties
+/// the digest to `sha1_pure(blob_canonical_spec(content@))` —
+/// universally, for every input slice, no admit.
+///
+/// Implementation builds the canonical bytes in two streaming chunks:
+/// the header (`blob <len>\0`) followed by the content. The Verus
+/// proof tracks `bytes_so_far` through both `update` calls and
+/// shows it equals `blob_canonical_spec(content@)` at the moment
+/// `digest()` is called. The streaming Sha1 axiom (`digest()
+/// ensures out@ == sha1_pure(bytes_so_far)`) closes the gap.
+pub fn blob_hash(content: &[u8]) -> (out: [u8; 20])
+    ensures
+        out@ == sha1_pure(blob_canonical_spec(content@)),
+{
+    // Build the header bytes: b"blob " ++ decimal_ascii(content.len()) ++ b"\0".
+    // Same shape as the first half of `blob_canonical_bytes`; we
+    // assemble it as a separate buffer so we can update the hasher
+    // with header and content as two distinct chunks (matching how
+    // `tg-canonical::Sha1` is actually used in `src/blob.rs`).
+    let prefix: [u8; 5] = [0x62u8, 0x6cu8, 0x6fu8, 0x62u8, 0x20u8];
+    let mut header: Vec<u8> = Vec::new();
+    header.extend_from_slice(&prefix);
+    let len_ascii = usize_to_decimal_ascii(content.len());
+    header.extend_from_slice(len_ascii.as_slice());
+    header.push(0u8);
+    proof {
+        assert(header@ =~= seq![0x62u8, 0x6cu8, 0x6fu8, 0x62u8, 0x20u8]
+            .add(decimal_ascii(content.len() as nat))
+            .add(seq![0u8]));
+    }
+
+    let mut h = Sha1State::new();
+    proof {
+        assert(h.bytes_so_far() == Seq::<u8>::empty());
+    }
+
+    h.update(header.as_slice());
+    proof {
+        assert(h.bytes_so_far() =~= header@);
+    }
+
+    h.update(content);
+    proof {
+        // After two updates, bytes_so_far is the concatenation of the
+        // header bytes and the content — exactly blob_canonical_spec.
+        assert(h.bytes_so_far() =~= header@.add(content@));
+        assert(header@ =~= seq![0x62u8, 0x6cu8, 0x6fu8, 0x62u8, 0x20u8]
+            .add(decimal_ascii(content.len() as nat))
+            .add(seq![0u8]));
+        assert(blob_canonical_spec(content@) =~=
+            seq![0x62u8, 0x6cu8, 0x6fu8, 0x62u8, 0x20u8]
+                .add(decimal_ascii(content.len() as nat))
+                .add(seq![0u8])
+                .add(content@));
+        assert(h.bytes_so_far() =~= blob_canonical_spec(content@));
+    }
+
+    h.digest()
+}
+
 } // verus!
