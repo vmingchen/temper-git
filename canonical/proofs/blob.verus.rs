@@ -44,23 +44,141 @@ verus! {
 
 // ── Specification primitives ─────────────────────────────────────────
 
-/// Mathematical decimal-ASCII rendering of a natural number. Pure spec
-/// (no executable definition); `usize_to_decimal_ascii` below ties an
-/// executable to it via `external_body`. The bound on `nat` is
+/// Mathematical decimal-ASCII rendering of a natural number. Defined
+/// recursively: numbers below 10 render to a single ASCII digit byte;
+/// larger numbers prepend the rendering of `n / 10` to the digit byte
+/// for `n % 10`. `usize_to_decimal_ascii` below ties Rust's `format!`
+/// to this spec via `external_body`. The `nat` domain is
 /// width-independent, so the spec doesn't need to know whether we're
 /// on 32- or 64-bit host.
-pub uninterp spec fn decimal_ascii(n: nat) -> Seq<u8>;
+pub open spec fn decimal_ascii(n: nat) -> Seq<u8>
+    decreases n,
+{
+    if n < 10 {
+        seq![(n + 0x30) as u8]
+    } else {
+        decimal_ascii(n / 10).add(seq![((n % 10) + 0x30) as u8])
+    }
+}
 
-/// Length envelope. `n` requires *at most* one ASCII byte per decimal
-/// digit; for usize on a 64-bit host the longest representation is
-/// 20 bytes (`18446744073709551615`). Stated as a `broadcast proof`
-/// so downstream proofs can use it without explicit invocation.
-pub broadcast proof fn decimal_ascii_len_bounds(n: nat)
+/// Lower bound: decimal_ascii produces at least one byte for every
+/// natural number (including 0, which renders to `b"0"`). **Derived**
+/// by induction on `n`, no `admit`. Stated as a `broadcast proof` so
+/// downstream proofs can use it without explicit invocation.
+pub broadcast proof fn decimal_ascii_len_lb(n: nat)
     ensures
         #[trigger] decimal_ascii(n).len() >= 1,
-        n <= 0xFFFF_FFFF_FFFF_FFFFu64 ==> decimal_ascii(n).len() <= 20,
+    decreases n,
 {
-    admit()
+    if n < 10 {
+        // Base: decimal_ascii(n) == seq![digit] of length 1.
+    } else {
+        // Inductive: decimal_ascii(n) == decimal_ascii(n/10) ++ [digit];
+        // the recursive call has length ≥ 1 by IH; concatenating one
+        // more byte preserves that.
+        decimal_ascii_len_lb(n / 10);
+    }
+}
+
+// ── Power-of-10 scaffolding for the upper bound ─────────────────────
+
+/// `pow10(k)` = 10^k. Recursive open spec; standard vstd pattern.
+pub open spec fn pow10(k: nat) -> nat
+    decreases k,
+{
+    if k == 0 { 1nat }
+    else { 10 * pow10((k - 1) as nat) }
+}
+
+/// `n / 10 < pow10(k - 1)` whenever `n < pow10(k)` and `k >= 1`.
+/// The inductive step the upper-bound lemma needs.
+pub proof fn pow10_div_step(n: nat, k: nat)
+    requires
+        k >= 1,
+        n < pow10(k),
+    ensures
+        n / 10 < pow10((k - 1) as nat),
+{
+    // pow10(k) == 10 * pow10(k-1) by the open spec definition.
+    // n < 10 * pow10(k-1) ==> n/10 < pow10(k-1) by integer division.
+    assert(pow10(k) == 10 * pow10((k - 1) as nat));
+}
+
+/// Generic upper bound: if `n < pow10(k)`, then the decimal rendering
+/// is at most `k` bytes long (with the convention that `pow10(0) = 1`,
+/// so `n == 0` requires `k >= 1`, and `decimal_ascii(0)` has length 1).
+/// Proof by structural induction on `n` paired with the
+/// `pow10_div_step` lemma.
+pub proof fn decimal_ascii_len_le_pow10(n: nat, k: nat)
+    requires
+        k >= 1,
+        n < pow10(k),
+    ensures
+        decimal_ascii(n).len() <= k,
+    decreases n,
+{
+    if n < 10 {
+        // length 1, and k >= 1 by precondition
+    } else {
+        // k >= 2 here: n >= 10 and n < pow10(k) implies pow10(k) > 10,
+        // which implies k >= 2 (since pow10(1) == 10).
+        assert(pow10(1nat) == 10) by (compute);
+        if k == 1 {
+            // n < pow10(1) == 10 contradicts n >= 10.
+            assert(false);
+        }
+        // Inductive step: n/10 < pow10(k-1), and (k-1) >= 1.
+        pow10_div_step(n, k);
+        decimal_ascii_len_le_pow10(n / 10, (k - 1) as nat);
+        // length(n) = length(n/10) + 1 <= (k-1) + 1 == k.
+    }
+}
+
+/// `pow10(20) > u64::MAX`. Concrete arithmetic, dispatched by Z3 with
+/// the spec definition unfolded. Bridges the generic
+/// `decimal_ascii_len_le_pow10` lemma to the `u64`-specific upper
+/// bound below.
+pub proof fn pow10_20_gt_u64_max()
+    ensures
+        pow10(20nat) > 0xFFFF_FFFF_FFFF_FFFFu64 as nat,
+{
+    // Force Verus to unfold the recursive definition step by step.
+    // Each line establishes pow10(k) = 10^k for the next k.
+    assert(pow10(0nat) == 1);
+    assert(pow10(1nat) == 10);
+    assert(pow10(2nat) == 100);
+    assert(pow10(3nat) == 1000);
+    assert(pow10(4nat) == 10000);
+    assert(pow10(5nat) == 100000);
+    assert(pow10(6nat) == 1000000);
+    assert(pow10(7nat) == 10000000);
+    assert(pow10(8nat) == 100000000);
+    assert(pow10(9nat) == 1000000000);
+    assert(pow10(10nat) == 10000000000);
+    assert(pow10(11nat) == 100000000000);
+    assert(pow10(12nat) == 1000000000000);
+    assert(pow10(13nat) == 10000000000000);
+    assert(pow10(14nat) == 100000000000000);
+    assert(pow10(15nat) == 1000000000000000);
+    assert(pow10(16nat) == 10000000000000000);
+    assert(pow10(17nat) == 100000000000000000);
+    assert(pow10(18nat) == 1000000000000000000);
+    assert(pow10(19nat) == 10000000000000000000);
+    assert(pow10(20nat) == 100000000000000000000);
+}
+
+/// Upper bound: for any `n` representable as a `u64`, the rendering
+/// fits in 20 bytes (longest decimal representation of u64::MAX is
+/// `"18446744073709551615"`, 20 chars). **Derived** by composing
+/// `decimal_ascii_len_le_pow10` with `pow10_20_gt_u64_max`.
+pub broadcast proof fn decimal_ascii_len_ub_u64(n: nat)
+    requires
+        n <= 0xFFFF_FFFF_FFFF_FFFFu64,
+    ensures
+        #[trigger] decimal_ascii(n).len() <= 20,
+{
+    pow10_20_gt_u64_max();
+    decimal_ascii_len_le_pow10(n, 20nat);
 }
 
 /// The canonical bytes form, expressed purely. Spec function — apps
